@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { auditPr, installHooks } from "./cli.mjs";
-import { migrateReplica, seedWorktreeReplicaIfAvailable } from "./db.mjs";
+import { incrementalSyncCloudDb, migrateReplica, seedWorktreeReplicaIfAvailable } from "./db.mjs";
 
 function findBin(name, extras = []) {
   const cmd = process.platform === "win32" ? "where.exe" : "which";
@@ -436,6 +436,7 @@ export async function runAutopilotLoop(root, {
   const wtStates = new Map();
   const recentEvents = [];
   let lastPullAt = 0;
+  let lastDbSyncAt = 0;
   let lastRemoteSha = "";
 
   function recordEvent(msg) {
@@ -497,6 +498,16 @@ export async function runAutopilotLoop(root, {
         if (pulled.ok) {
           lastRemoteSha = pulled.remoteSha;
           for (const ev of pulled.events) recordEvent(ev);
+        }
+      }
+
+      // 1b. 每 180 秒检测一次云端大库 updated_at，有新数据时自动增量合入所有工位副本（保留本地自造测试数据）
+      if (!once && now - lastDbSyncAt >= 180 * 1000) {
+        lastDbSyncAt = now;
+        const wtPaths = listWorktrees(root).map((w) => w.worktree);
+        const dbSync = await incrementalSyncCloudDb(root, wtPaths).catch(() => ({ updated: false }));
+        if (dbSync.updated) {
+          recordEvent(`🗄️ 云端主库增量同步完成：新增/更新 ${dbSync.deltaJobs ?? dbSync.syncedJobs ?? 0} 条记录至各工位本地副本`);
         }
       }
 

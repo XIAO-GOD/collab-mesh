@@ -304,6 +304,7 @@ export async function pullCloudReplica(root, {
   let syncedJobs = 0;
   let syncedSources = 0;
   let cloudTotalOpen = 0;
+  let cloudUpdatedAt = null;
 
   try {
     db.exec("PRAGMA journal_mode = DELETE;");
@@ -314,6 +315,7 @@ export async function pullCloudReplica(root, {
     if (!statsRes.ok) throw new Error(`拉取云端状态失败 HTTP ${statsRes.status}`);
     const stats = await statsRes.json();
     cloudTotalOpen = stats.total_open || 0;
+    cloudUpdatedAt = stats.updated_at || null;
 
     db.exec("BEGIN");
     const insertSource = db.prepare(`INSERT OR REPLACE INTO sources (
@@ -416,6 +418,7 @@ export async function pullCloudReplica(root, {
   writeFileSync(path.join(common, "collab-db-seed.meta.json"), JSON.stringify({
     syncedAt: new Date().toISOString(),
     origin,
+    cloudUpdatedAt,
     cloudTotalOpen,
     syncedJobs,
     syncedSources,
@@ -600,4 +603,121 @@ export function getDatabaseStatus(root) {
   } finally {
     db.close();
   }
+}
+
+/**
+ * 后台准实时增量同步：对比云端 /api/jobdb/stats 的 updated_at / total_open；
+ * 若云端大库有新数据入库，仅增量拉取新增记录并以 INSERT OR REPLACE 注入种子缓存及各工位副本（保留开发者本地自建测试数据）。
+ */
+export async function incrementalSyncCloudDb(root, worktreePaths = [root], {
+  maxIncremental = 250,
+  fetcher = globalThis.fetch,
+} = {}) {
+  const cfg = loadDbConfig(root);
+  const migDir = path.resolve(root, cfg.migrationsDir);
+  if (!existsSync(migDir)) return { updated: false, reason: "no-migrations-dir" };
+
+  const origin = (cfg.cloudDbApiOrigin || "").replace(/\/$/, "");
+  if (!origin) return { updated: false, reason: "no-cloud-origin" };
+
+  const common = commonGitDir(root);
+  const seedPath = path.join(common, "collab-db-seed.sqlite");
+  const metaPath = path.join(common, "collab-db-seed.meta.json");
+
+  if (!existsSync(seedPath)) {
+    const initial = await pullCloudReplica(root, { remoteUrl: origin, limit: 500, withDetails: 20, fetcher });
+    for (const wt of worktreePaths) {
+      if (path.resolve(wt) !== path.resolve(root)) seedWorktreeReplicaIfAvailable(root, wt);
+    }
+    return { updated: true, mode: "initial-seed", syncedJobs: initial.syncedJobs };
+  }
+
+  const prevMeta = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, "utf8")) : {};
+  const statsRes = await fetcher(`${origin}/api/jobdb/stats`, { headers: { accept: "application/json" } });
+  if (!statsRes.ok) return { updated: false, reason: `http-${statsRes.status}` };
+  const stats = await statsRes.json();
+
+  if (prevMeta.cloudUpdatedAt && stats.updated_at === prevMeta.cloudUpdatedAt && stats.total_open === prevMeta.cloudTotalOpen) {
+    return { updated: false, reason: "up-to-date", cloudUpdatedAt: stats.updated_at };
+  }
+
+  // 拉取最新增量岗位（遇到本地种子库已收录的旧记录即停止翻页）
+  const seedDb = new DatabaseSync(seedPath);
+  const newJobs = [];
+  try {
+    const hasJobStmt = seedDb.prepare("SELECT 1 FROM jobs WHERE id = ? AND first_seen_at = ?");
+    let cursor = null;
+    let stopPaging = false;
+    while (newJobs.length < maxIncremental && !stopPaging) {
+      const q = new URL(`${origin}/api/jobdb/jobs`);
+      q.searchParams.set("limit", "50");
+      if (cursor) q.searchParams.set("cursor", cursor);
+      const listRes = await fetcher(q.href, { headers: { accept: "application/json" } });
+      if (!listRes.ok) break;
+      const page = await listRes.json();
+      for (const j of page.jobs || []) {
+        if (j.first_seen_at && hasJobStmt.get(j.id, j.first_seen_at)) {
+          stopPaging = true;
+          break;
+        }
+        newJobs.push(j);
+        if (newJobs.length >= maxIncremental) break;
+      }
+      if (!page.next_cursor) break;
+      cursor = page.next_cursor;
+    }
+  } finally {
+    seedDb.close();
+  }
+
+  const targets = [seedPath, ...worktreePaths.map((wt) => path.resolve(wt, cfg.replicaFile)).filter((p) => existsSync(p))];
+  for (const dbFile of new Set(targets)) {
+    const db = new DatabaseSync(dbFile);
+    try {
+      db.exec("PRAGMA busy_timeout = 5000;");
+      applyMigrationsOnConnection(db, migDir);
+      db.exec("BEGIN");
+      const upSource = db.prepare(`INSERT OR REPLACE INTO sources (
+        source, company, adapter, open_count, last_run_at, last_ok_at, last_status,
+        last_seen, last_new, last_changed, last_closed, last_deferred, last_error, last_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL)`);
+      for (const s of stats.sources || []) {
+        upSource.run(
+          s.source, s.company, s.adapter, s.open_count ?? 0,
+          s.last_run_at ?? null, s.last_ok_at ?? null, s.last_status ?? null,
+          s.last_new ?? null, s.last_changed ?? null, s.last_closed ?? null, s.last_deferred ?? null
+        );
+      }
+      const upJob = db.prepare(`INSERT OR REPLACE INTO jobs (
+        id, source, company, company_type, title, category, department, cities, recruit_type, education,
+        min_years, experience, salary, description, requirements, url, posted_at, source_updated_at, deadline,
+        content_hash, sig, cluster_key, first_seen_at, last_changed_at, closed_at, missing_since
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT description FROM jobs WHERE id = ?1), ''), COALESCE((SELECT requirements FROM jobs WHERE id = ?1), ''), ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL)`);
+      for (const j of newJobs) {
+        const seenAt = j.first_seen_at || new Date().toISOString();
+        upJob.run(
+          j.id, j.source, j.company, j.company_type ?? null, j.title, j.category ?? null,
+          j.department ?? null, JSON.stringify(Array.isArray(j.cities) ? j.cities : []),
+          j.recruit_type || "social", j.education ?? null, j.min_years ?? null,
+          j.experience ?? null, j.salary ?? null,
+          j.url, j.posted_at ?? null, j.source_updated_at ?? null, j.deadline ?? null,
+          sha256(`${j.id}:${j.title}:${seenAt}`).slice(0, 16), seenAt, seenAt
+        );
+      }
+      db.exec("COMMIT");
+    } finally {
+      db.close();
+    }
+  }
+
+  writeFileSync(metaPath, JSON.stringify({
+    ...prevMeta,
+    syncedAt: new Date().toISOString(),
+    origin,
+    cloudUpdatedAt: stats.updated_at || null,
+    cloudTotalOpen: stats.total_open || 0,
+    lastIncrementalCount: newJobs.length,
+  }, null, 2) + "\n", "utf8");
+
+  return { updated: true, mode: "incremental", deltaJobs: newJobs.length, cloudTotalOpen: stats.total_open || 0 };
 }
