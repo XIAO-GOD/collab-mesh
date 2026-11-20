@@ -12,5 +12,5 @@
     "Collab Gate"
   ],
   "localTestCommand": "",
-  "gateTestCommand": "node --test tests/collab.test.mjs tests/autopilot.test.mjs"
+  "gateTestCommand": "node --test tests/collab.test.mjs tests/autopilot.test.mjs tests/db.test.mjs"
 }

@@ -6,3 +6,6 @@ Thumbs.db
 .env
 .env.*
 *.log
+
+# Collab-Mesh 本机多工位元数据（不入库）
+.collab-data/

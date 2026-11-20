@@ -56,6 +56,12 @@ node .collab/cli.mjs autopilot start --quiet 45 --interval 20    # 启动后台�
 node .collab/cli.mjs autopilot status                            # 查看守护进程状态与最近同步日志
 node .collab/cli.mjs autopilot stop                              # 停止后台守护进程
 node .collab/cli.mjs autopilot install-service                   # 注册 Windows 登录开机自启任务
+
+# 共享云主库 + 每工位独立本地副本（线上严禁手改，本地随意折腾、坏了一键秒级还原）
+node .collab/cli.mjs db pull                                     # 从云端共享主库同步快照至本地缓存与当前工位副本
+node .collab/cli.mjs db reset                                    # 毫秒级还原当前工位损坏的数据库副本
+node .collab/cli.mjs db query "SELECT * FROM sources LIMIT 5"    # 查询本地副本（加 --remote 为线上严格只读查询）
+node .collab/cli.mjs db status                                   # 查看副本大小、在招条数与已应用迁移
 ```
 
 ---

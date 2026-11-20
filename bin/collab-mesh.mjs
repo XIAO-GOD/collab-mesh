@@ -23,6 +23,7 @@ const SHIM_BLOCK = `${START_MARKER}
 3. **开工先扫防撞雷达**：修改代码前先运行 \`node .collab/cli.mjs radar --paths "<拟改路径>"\` 或 \`node .collab/cli.mjs start --agent <你的Agent名> --topic <英文短横线主题> --paths "<拟改路径>"\`。
 4. **同机多开用独立工位**：若同一台机器并行运行多个 Agent，使用 \`node .collab/cli.mjs spawn --agent <agent> --topic <topic>\` 创建隔离 Worktree 与独立端口；若当前目录存在 \`.collab-seat.json\`，优先使用其中分配的 \`port\` 启动本地服务。
 5. **双向无感自动同步**：本平台支持 \`node .collab/cli.mjs autopilot start\` 后台守护（停笔自动提 PR 过 CI 合入 \`main\`，每 20 秒实时拉取他人更新）；也可显式运行 \`node .collab/cli.mjs ship --title "<提交标题>"\` 立即交付。
+6. **共享数据库与本地副本铁律**：云端主库仅允许自动抓取器与合入 \`main\` 的迁移脚本写入，**严禁任何人与 AI 手动直连改写线上库**；日常开发统一运行 \`node .collab/cli.mjs db pull\` 拉取本工位独立副本（\`.collab-data/*.sqlite\`），在本地副本上随意调试，损坏后运行 \`node .collab/cli.mjs db reset\` 一键还原。
 ${END_MARKER}`;
 
 function upsertManagedBlock(filePath, block) {
@@ -83,6 +84,7 @@ export function initRepo(targetRepo, options = {}) {
   mkdirSync(collabDir, { recursive: true });
   copyFileSync(path.join(PKG_ROOT, "runtime/cli.mjs"), path.join(collabDir, "cli.mjs"));
   copyFileSync(path.join(PKG_ROOT, "runtime/autopilot.mjs"), path.join(collabDir, "autopilot.mjs"));
+  copyFileSync(path.join(PKG_ROOT, "runtime/db.mjs"), path.join(collabDir, "db.mjs"));
   if (!existsSync(path.join(collabDir, "PROTOCOL.md")) || options.overwrite) {
     copyFileSync(path.join(PKG_ROOT, "templates/PROTOCOL.md"), path.join(collabDir, "PROTOCOL.md"));
   }
@@ -140,8 +142,8 @@ ${SHIM_BLOCK}
     copyFileSync(path.join(PKG_ROOT, "templates/decision-0001.md"), adr0001);
   }
 
-  // 5. 确保 .gitignore 忽略本机工位描述文件
-  ensureGitignoreEntries(root, [".collab-seat.json"]);
+  // 5. 确保 .gitignore 忽略本机工位描述文件与本地数据库副本目录
+  ensureGitignoreEntries(root, [".collab-seat.json", ".collab-data/"]);
 
   // 6. 安装本地 pre-push 钩子拦截直推 main
   const hookPath = installHooks(root);
