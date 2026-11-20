@@ -9,6 +9,7 @@ import {
   assertReadOnlySql,
   auditDatabaseChanges,
   getDatabaseStatus,
+  incrementalSyncCloudDb,
   openD1Replica,
   pullCloudReplica,
   queryDatabase,
@@ -121,6 +122,37 @@ test("db pull 同步云端数据到本地副本、AI 随意删改后 db reset �
   const codexSeat = JSON.parse(spawnRes.stdout).seat;
   assert.equal(codexSeat.dbReplica.seeded, true);
   assert.equal(getDatabaseStatus(codexSeat.worktree).openJobsInReplica, 2);
+
+  // 开发者在副工位本地造了一条测试数据，同时云端大库新增了第 3 条真实岗位 → 增量同步同时保留本地测试数据并合入云端新数据！
+  await queryDatabase(codexSeat.worktree, `INSERT INTO jobs (id, source, company, title, url, content_hash, first_seen_at, last_changed_at) VALUES ('local:test1', 'bytedance', '本地测试公司', '测试岗', 'https://example.com/t1', 'h1', '2026-11-20T02:00:00Z', '2026-11-20T02:00:00Z')`);
+  const nextCloudFetcher = async (url) => {
+    const u = new URL(url);
+    if (u.pathname === "/api/jobdb/stats") {
+      return Response.json({
+        ok: true,
+        total_open: 3,
+        updated_at: "2026-11-20T03:00:00Z",
+        sources: [{ source: "bytedance", company: "字节跳动", adapter: "feishu", open_count: 3, last_status: "ok" }],
+      });
+    }
+    if (u.pathname === "/api/jobdb/jobs") {
+      return Response.json({
+        ok: true,
+        jobs: [
+          { id: "bytedance:3", source: "bytedance", company: "字节跳动", title: "新入库云端岗位", cities: ["深圳"], recruit_type: "social", url: "https://jobs.bytedance.com/3", first_seen_at: "2026-11-20T03:00:00Z" },
+          { id: "bytedance:1", source: "bytedance", company: "字节跳动", title: "大模型工程师", cities: ["北京"], recruit_type: "social", url: "https://jobs.bytedance.com/1", first_seen_at: "2026-11-20T00:00:00Z" },
+        ],
+        next_cursor: null,
+      });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  const inc = await incrementalSyncCloudDb(repo, [repo, codexSeat.worktree], { fetcher: nextCloudFetcher });
+  assert.equal(inc.updated, true);
+  assert.equal(inc.deltaJobs, 1);
+  assert.equal(getDatabaseStatus(repo).openJobsInReplica, 3, "主工位自动获得第 3 条云端新岗位");
+  assert.equal(getDatabaseStatus(codexSeat.worktree).openJobsInReplica, 4, "副工位同时拥有 3 条云端岗位 + 1 条本地自造测试数据");
 });
 
 test("远端只读屏障与 Collab Gate 数据库变更四重门禁校验", (t) => {
