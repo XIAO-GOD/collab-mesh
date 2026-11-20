@@ -1,8 +1,8 @@
-# Collab-Mesh · 任意人 × 任意异构 Agent 协同开发底座
+# AI原生联合开发平台
 
-> **不写死人名、不绑定单一 AI 工具、禁止直推 `main`、免人工审批阻塞、CI 全绿自动合入。**
+> **任意人加入 · 任意 Agent 加入 · 禁止直推 `main` · 停笔自动提 PR 过 CI · 20 秒实时双向同步**
 
-`collab-mesh` 是一套零外部依赖的 GitHub 原生多智能体协同工程底座（同时可作为 Codex / Claude Code / Antigravity 通用 Skill 安装）。只需一条 `init` 命令，即可让任意仓库同时兼容 **Antigravity、Codex、Claude Code、Cursor、Gemini CLI、夜班工厂** 等任意数量的开发者与智能体并行开发。
+**AI原生联合开发平台**（CLI / Skill 标识：`collab-mesh`）是一套零外部依赖的 GitHub 原生多智能体协同研发底座。只需一条 `init` 命令，即可让任意仓库同时兼容 **Antigravity、Codex、Claude Code、Cursor、Gemini CLI、夜班工厂** 等任意数量的开发者与智能体无感并行开发。
 
 ---
 

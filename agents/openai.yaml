@@ -1,4 +1,4 @@
 interface:
-  display_name: "Collab-Mesh 多人多Agent协同底座"
-  short_description: "一键为任意GitHub仓库注入异构Agent引导环、本机多工位Worktree、PR防撞雷达与免审批CI全绿自动合并"
-  default_prompt: "使用 $collab-mesh 为当前 GitHub 仓库配置支持任意人 × 任意异构 Agent 协同开发的零信任分支保护、Worktree 多工位与 PR 自动合并流水线。"
+  display_name: "AI原生联合开发平台"
+  short_description: "面向任意人×任意异构Agent的零信任联合开发平台：统一引导环、多工位Worktree、PR防撞雷达与双向无感自动同步"
+  default_prompt: "使用 $collab-mesh 将当前仓库接入「AI原生联合开发平台」，启用异构 Agent 统一引导环、Worktree 多工位隔离、零直推分支保护与 Autopilot 双向无感自动同步。"

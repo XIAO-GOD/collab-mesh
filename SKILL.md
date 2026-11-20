@@ -1,12 +1,12 @@
 ---
 name: collab-mesh
 description: >-
-  当用户提到“多人联合开发”“让另一个Codex/Claude/Agent加入开发”“给仓库接入多Agent协同”“开辟新工位/Worktree”“扫描PR冲突雷达”“禁止直推main开启PR自动合并”时激活此技能，把任意 GitHub 仓库升级为支持任意人 × 任意异构 Agent 零信任自动协同的工程底座。
+  当用户提到“AI原生联合开发平台”“多人联合开发”“让另一个Codex/Claude/Agent加入开发”“给仓库接入多Agent协同”“开辟新工位/Worktree”“开启自动双向同步”时激活此技能，把任意 GitHub 仓库升级为支持任意人 × 任意异构 Agent 零信任自动协同的「AI原生联合开发平台」。
 ---
 
-# Collab-Mesh（任意人 × 任意异构 Agent 协同开发底座）
+# AI原生联合开发平台（AI-Native Collaborative Development Platform）
 
-`collab-mesh` 用于解决**多人 + 多异构编程 Agent（Antigravity、Codex、Claude Code、Cursor、Gemini CLI、夜班工厂等）在同一 GitHub 仓库高频并行研发**时的五大核心难题：规则分裂、同机多开抢锁、跨机盲改撞车、直推主干破窗、人工审批阻塞。
+**AI原生联合开发平台** 用于解决**多人 + 多异构编程 Agent（Antigravity、Codex、Claude Code、Cursor、Gemini CLI、夜班工厂等）在同一 GitHub 仓库高频并行研发**时的五大核心难题：规则分裂、同机多开抢锁、跨机盲改撞车、直推主干破窗、人工推拉繁琐。
 
 ## 核心入口（以本 Skill 目录 `<SKILL_DIR>` 为基准）
 
