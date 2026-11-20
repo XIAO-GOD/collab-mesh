@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { auditPr, installHooks } from "./cli.mjs";
+import { migrateReplica, seedWorktreeReplicaIfAvailable } from "./db.mjs";
 
 function findBin(name, extras = []) {
   const cmd = process.platform === "win32" ? "where.exe" : "which";
@@ -304,6 +305,15 @@ export function pullAllWorktrees(root, protectedBranch, wtStates) {
 
     const branch = (wt.branch || "").replace("refs/heads/", "");
     const headSha = exec(GIT, ["rev-parse", "HEAD"], { cwd: wtPath }).stdout;
+    try {
+      const seeded = seedWorktreeReplicaIfAvailable(root, wtPath);
+      if (!seeded.seeded && seeded.reason === "already-exists") {
+        const mig = migrateReplica(wtPath);
+        if (mig.newlyApplied.length > 0) {
+          events.push(`🗄️ 工位 (${wtPath}) 本地数据库副本已自动应用新迁移：${mig.newlyApplied.join(", ")}`);
+        }
+      }
+    } catch {}
     if (headSha === remoteSha && parseDirtyFiles(wtPath).length === 0) continue;
 
     const countsRes = exec(GIT, ["rev-list", "--left-right", "--count", `HEAD...${baseRef}`], { cwd: wtPath });

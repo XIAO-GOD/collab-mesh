@@ -45,4 +45,10 @@ node .collab/cli.mjs protect --checks "Collab Gate,Test"
 node .collab/cli.mjs autopilot start --quiet 45 --interval 20
 node .collab/cli.mjs autopilot status
 node .collab/cli.mjs autopilot install-service
+
+# 共享数据库与每工位独立副本管理（线上只读防误改，本地副本随便折腾、一键还原）
+node .collab/cli.mjs db pull
+node .collab/cli.mjs db reset
+node .collab/cli.mjs db query "SELECT COUNT(*) AS total FROM jobs"
+node .collab/cli.mjs db status
 ```

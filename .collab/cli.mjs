@@ -9,6 +9,15 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  auditDatabaseChanges,
+  getDatabaseStatus,
+  migrateReplica,
+  pullCloudReplica,
+  queryDatabase,
+  resetReplica,
+  seedWorktreeReplicaIfAvailable,
+} from "./db.mjs";
 
 function findBinary(name, extraCandidates = []) {
   const probeCmd = process.platform === "win32" ? "where.exe" : "which";
@@ -268,12 +277,22 @@ function scanRadar(root, targetPaths = []) {
   }
   const openPrs = JSON.parse(prsRes.stdout);
   const overlaps = [];
+  const dbLockHolders = [];
+  const dbHotGlobs = ["migrations/**", "site/migrations/**", "data-fixes/**", "site/data-fixes/**"];
   for (const pr of openPrs) {
     if (pr.headRefName === currentBranch) continue;
     const scopeMatch = /<!--\s*collab-scope:\s*([^>]+?)-->/i.exec(pr.body || "");
     const agentMatch = /<!--\s*collab-agent:\s*([^>]+?)-->/i.exec(pr.body || "");
     const declaredGlobs = scopeMatch ? scopeMatch[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
     const changedFiles = (pr.files || []).map((f) => f.path);
+    if (globsOverlap(dbHotGlobs, declaredGlobs.filter((g) => g !== "*"), changedFiles)) {
+      dbLockHolders.push({
+        number: pr.number,
+        title: pr.title,
+        author: pr.author?.login || "unknown",
+        branch: pr.headRefName,
+      });
+    }
     const conflict = targetPaths.length > 0 && globsOverlap(targetPaths, declaredGlobs.filter((g) => g !== "*"), changedFiles);
     if (conflict) {
       overlaps.push({
@@ -288,7 +307,7 @@ function scanRadar(root, targetPaths = []) {
       });
     }
   }
-  return { online: true, protectedBranch: cfg.protectedBranch, openPrs, overlaps };
+  return { online: true, protectedBranch: cfg.protectedBranch, openPrs, overlaps, dbLockHolders };
 }
 
 function cmdRadar(root, flags) {
@@ -301,6 +320,12 @@ function cmdRadar(root, flags) {
   console.log(`📡 [Collab Radar] 当前远端活跃 PR 数：${report.openPrs.length}`);
   for (const pr of report.openPrs) {
     console.log(`  - #${pr.number} [${pr.isDraft ? "Draft 信标" : "Ready"}] @${pr.author?.login} (${pr.headRefName}): ${pr.title}`);
+  }
+  if ((report.dbLockHolders || []).length > 0) {
+    console.log(`\n🔒 [数据库迁移全局排队锁] 当前已有活跃 PR 正在修改 migrations / data-fixes：`);
+    for (const h of report.dbLockHolders) {
+      console.log(`  ! PR #${h.number} (@${h.author} · ${h.branch}): ${h.title}（请待其合入后再新增数据库迁移，避免序号撞车）`);
+    }
   }
   if (report.overlaps.length > 0) {
     console.log(`\n⚠️ 检测到 ${report.overlaps.length} 个潜在文件范围重叠：`);
@@ -344,6 +369,8 @@ async function cmdSpawn(root, flags) {
     }
   }
 
+  const dbReplica = seedWorktreeReplicaIfAvailable(mainWorktree, targetDir);
+
   const seatMeta = {
     actor,
     agent,
@@ -353,6 +380,7 @@ async function cmdSpawn(root, flags) {
     worktree: targetDir,
     mainRepo: mainWorktree,
     copiedSecrets,
+    dbReplica,
     createdAt: new Date().toISOString(),
   };
   writeFileSync(path.join(targetDir, ".collab-seat.json"), JSON.stringify(seatMeta, null, 2) + "\n", "utf8");
@@ -445,7 +473,7 @@ function cmdDecision(root, positional, flags) {
   console.log(JSON.stringify({ ok: true, file: path.relative(root, filePath).replace(/\\/g, "/") }, null, 2));
 }
 
-export function auditPr(root, baseRef) {
+export function auditPr(root, baseRef, extraLabels = []) {
   const cfg = loadConfig(root);
   const errors = [];
   const requiredFiles = ["AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursor/rules/00-collab.mdc", ".collab/PROTOCOL.md"];
@@ -455,12 +483,24 @@ export function auditPr(root, baseRef) {
   const tracked = git(["ls-files"], { cwd: root }).stdout.split(/\r?\n/).filter(Boolean);
   for (const file of tracked) {
     const base = path.basename(file);
-    if (base === ".dev.vars" || base === ".env.local" || base === ".collab-seat.json") {
-      errors.push(`禁止跟踪敏感或本机工位文件：${file}`);
+    const norm = file.replace(/\\/g, "/");
+    if (base === ".dev.vars" || base === ".env.local" || base === ".collab-seat.json" || norm.startsWith(".collab-data/")) {
+      errors.push(`禁止跟踪敏感或本机工位副本文件：${file}`);
     }
   }
   const base = baseRef || (hasOrigin(root) ? `origin/${cfg.protectedBranch}` : "HEAD~1");
   const baseCheck = git(["rev-parse", "--verify", base], { cwd: root, allowFail: true });
+  let prLabels = [...extraLabels];
+  if (process.env.PR_LABELS) {
+    try {
+      const parsed = JSON.parse(process.env.PR_LABELS);
+      if (Array.isArray(parsed)) prLabels.push(...parsed);
+    } catch {
+      prLabels.push(...process.env.PR_LABELS.split(",").map((s) => s.trim()).filter(Boolean));
+    }
+  }
+  const dbAudit = auditDatabaseChanges(root, baseCheck.status === 0 ? base : null, prLabels);
+  if (!dbAudit.ok) errors.push(...dbAudit.errors);
   const diffArgs = baseCheck.status === 0 ? ["diff", "--unified=0", `${base}...HEAD`] : ["diff", "--unified=0", "HEAD"];
   const diffText = git(diffArgs, { cwd: root, allowFail: true }).stdout;
   const secretRegex = /\b(sk-[A-Za-z0-9_-]{24,}|ghp_[A-Za-z0-9]{24,}|gho_[A-Za-z0-9]{24,}|AKIA[0-9A-Z]{16})\b/;
@@ -771,8 +811,33 @@ async function main() {
       }
       break;
     }
+    case "db": {
+      const sub = positional[1] || "status";
+      if (sub === "pull") {
+        const res = await pullCloudReplica(root, {
+          remoteUrl: flags.url,
+          limit: flags.limit ? Number(flags.limit) : 1000,
+          withDetails: flags.details !== undefined ? Number(flags.details) : 40,
+        });
+        console.log(JSON.stringify(res, null, 2));
+      } else if (sub === "reset") {
+        const res = await resetReplica(root, { remoteUrl: flags.url });
+        console.log(JSON.stringify(res, null, 2));
+      } else if (sub === "migrate") {
+        console.log(JSON.stringify(migrateReplica(root), null, 2));
+      } else if (sub === "query") {
+        const sql = positional[2] || flags.sql;
+        const res = await queryDatabase(root, sql, { remote: Boolean(flags.remote) });
+        console.log(JSON.stringify(res, null, 2));
+      } else if (sub === "status") {
+        console.log(JSON.stringify(getDatabaseStatus(root), null, 2));
+      } else {
+        throw new Error(`未知 db 子命令：${sub}。支持：pull | reset | migrate | query | status`);
+      }
+      break;
+    }
     default:
-      throw new Error(`未知命令：${command}。支持命令：status | hooks | radar | spawn | start | sync | decision | audit-pr | ship | protect | cleanup | autopilot`);
+      throw new Error(`未知命令：${command}。支持命令：status | hooks | radar | spawn | start | sync | decision | audit-pr | ship | protect | cleanup | autopilot | db`);
   }
 }
 

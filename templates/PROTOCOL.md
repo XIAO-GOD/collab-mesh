@@ -50,11 +50,30 @@ node .collab/cli.mjs ship --title "feat: 完成某某功能"
 
 # 8. 【回收清理】清理已合入 main 的本地 Worktree 工位与过期分支
 node .collab/cli.mjs cleanup
+
+# 9. 【共享数据库副本】拉取云端主库副本 / 一键还原损坏副本 / 本地或远端只读 SQL 查询
+node .collab/cli.mjs db pull
+node .collab/cli.mjs db reset
+node .collab/cli.mjs db query "SELECT company, COUNT(*) AS n FROM jobs GROUP BY company LIMIT 10"
+node .collab/cli.mjs db status
 ```
 
 ---
 
-## 三、敏感信息与环境隔离红线
+## 三、共享数据库“三道门”纪律（Database Governance）
+
+1. **云上唯一真相主库（全员可读、严禁手改）**：
+   - 所有人类开发者与所有 Agent 均可读取云端主库公开数据；但**任何人与任何 AI 严禁手动执行线上写操作**（`--remote` 模式在引擎层硬性拦截一切非 `SELECT` 语句）。
+   - 线上主库仅接受两条自动化写入通道：① 定时抓取工作流写入；② 提交 `migrations/NNNN_*.sql` 或 `data-fixes/NNNN_*.sql` 经 PR 测试全绿合入后由 CI 自动执行。
+2. **每工位独立本地副本（随便折腾、坏了一键还原）**：
+   - 每个工位拥有隔离的 `.collab-data/*.sqlite` 本地副本（已被 `.gitignore` 忽略，`spawn` 开新工位时毫秒级自动克隆，`autopilot` 拉到新迁移时自动升级表结构）。
+   - Agent 可在本地副本上随意增删改调试；一旦改坏，执行 `node .collab/cli.mjs db reset` 即可秒级恢复。
+3. **数据库迁移防撞车门禁**：
+   - `migrations/` 与 `data-fixes/` 属于全局排队热区，序号必须连续递增且严禁篡改已合入脚本；含 `DROP` 或无 `WHERE` 的高危语句未挂 `db-destructive` 标签一律由 `Collab Gate` 拦截。
+
+---
+
+## 四、敏感信息与环境隔离红线
 
 - 本地私有密钥仅允许存放在被 `.gitignore` 忽略的 `.dev.vars` 或 `.env.local` 中（`spawn` 创建新工位时会自动安全拷贝至子工位，绝不进入 Git）。
 - 严禁在源码、测试夹具或 Markdown 文档中硬编码真实 `sk-*`、`ghp_*`、`AKIA*` 等凭据。

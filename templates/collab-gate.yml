@@ -31,6 +31,7 @@ jobs:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       IS_DRAFT: ${{ github.event.pull_request.draft }}
       BASE_REF: ${{ github.base_ref }}
+      PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
     steps:
       - uses: actions/checkout@v5
         with:
