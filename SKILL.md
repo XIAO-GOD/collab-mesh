@@ -15,13 +15,16 @@ description: >-
 ```powershell
 node "<SKILL_DIR>/bin/collab-mesh.mjs" init "<目标仓库路径>" `
   --base-port 8790 `
-  --required-checks "Collab Gate,Test"
+  --required-checks "Collab Gate,Test" `
+  --site-url "https://your-domain.com" `
+  --health-paths "/,/api/health"
 ```
 
 注入后目标仓库自动获得：
 - **全异构引导环**：`AGENTS.md`、`CLAUDE.md`、`GEMINI.md`、`.cursor/rules/00-collab.mdc`、`.github/copilot-instructions.md` 全部幂等挂载托管区块，指向唯一权威协议 `.collab/PROTOCOL.md`。
-- **单文件零依赖协同 CLI**：`.collab/cli.mjs`（支持 `status` / `radar` / `spawn` / `start` / `sync` / `decision` / `ship` / `protect` / `cleanup`）。
-- **双保险主干防直推与免审批自动合并**：本地 `.git/hooks/pre-push` 硬件拦截 `git push origin main` + `.github/workflows/collab-gate.yml` 云端安全门禁与 CI 全绿自动 Squash 合入 + `protect` 一键配置远端分支保护（`enforce_admins=true`、`required_approving_review_count=0`、`allow_auto_merge=true`）。
+- **单文件零依赖协同 CLI**：`.collab/cli.mjs`（支持 `status` / `radar` / `spawn` / `start` / `sync` / `decision` / `ship` / `protect` / `cleanup` / `autopilot` / `db`）。
+- **双保险主干防直推与免审批自动合并**：本地 `.git/hooks/pre-push` 硬件拦截 `git push origin main` + `.github/workflows/collab-gate.yml` 云端安全门禁（含合并冲突标记拦截、密钥扫描、迁移门禁）与 CI 全绿自动 Squash 合入 + `protect` 一键配置远端分支保护。
+- **线上防崩四道保险**：每工位独立端口与本地数据库副本 + PR 独立预览网址 + 发布后自动全链路冒烟自检与失败秒级回滚 + `.github/workflows/uptime-monitor.yml` 每 10 分钟定时探活告警与恢复自动销警。
 
 ### 2. 已接入仓库中的日常协同操作
 

@@ -9,4 +9,5 @@
 4. **同机多开用独立工位**：若同一台机器并行运行多个 Agent，使用 `node .collab/cli.mjs spawn --agent <agent> --topic <topic>` 创建隔离 Worktree 与独立端口；若当前目录存在 `.collab-seat.json`，优先使用其中分配的 `port` 启动本地服务。
 5. **双向无感自动同步**：本平台支持 `node .collab/cli.mjs autopilot start` 后台守护（停笔自动提 PR 过 CI 合入 `main`，每 20 秒实时拉取他人更新）；也可显式运行 `node .collab/cli.mjs ship --title "<提交标题>"` 立即交付。
 6. **共享数据库与本地副本铁律**：云端主库仅允许自动抓取器与合入 `main` 的迁移脚本写入，**严禁任何人与 AI 手动直连改写线上库**；日常开发统一运行 `node .collab/cli.mjs db pull` 拉取本工位独立副本（`.collab-data/*.sqlite`），在本地副本上随意调试，损坏后运行 `node .collab/cli.mjs db reset` 一键还原。
+7. **防崩四道保险**：严禁携带合并冲突标记（`<<<<<<<`）提交；PR 支持独立预览网址验收；合入 `main` 部署后自动执行全链路冒烟自检，失败秒级自动回滚上一健康版本；线上每 10 分钟定时巡检异常自动提单告警。
 <!-- COLLAB-MESH:END -->

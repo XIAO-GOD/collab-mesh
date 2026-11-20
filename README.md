@@ -20,6 +20,11 @@
    - 自动拦截 `.dev.vars`、硬编码 `sk-*`/`ghp_*` 密钥与超大文件，全量 CI 测试通过后自动 Squash Merge 并清理源分支。
 5. **无冲突追加式决策记录（`decision`）**：
    每次架构或产品决策独立生成 `docs/decisions/<时间戳>-<slug>.md`，多人高频并发提交永不撞同一行文本。
+6. **线上防崩四道保险（Zero-Downtime Guardrails）**：
+   - 本地每工位自动挂载 `.collab-data/*.sqlite` 真实快照副本，预览永不因缺库报 `503`；
+   - 本地 `autopilot` 与云端 `Collab Gate` 双重硬性拦截未解决的 Git 冲突标记（`<<<<<<<`）；
+   - 支持 PR 独立预览网址验收，合入发布后自动执行全链路冒烟自检，一旦异常秒级自动回滚上一健康版本；
+   - `.github/workflows/uptime-monitor.yml` 每 10 分钟自动巡检线上站点，连续异常自动提 `incident` Issue 告警，恢复后自动销警。
 
 ---
 
