@@ -1,0 +1,151 @@
+# AI原生联合开发平台：线上站点定时健康巡检与自动告警/销警
+#
+# - 每 10 分钟自动巡检一次线上核心页面与接口（支持手动触发）
+# - 每次探活自动重试 3 次（过滤偶发网络抖动，杜绝误报）
+# - 连续失败时自动创建（或追加更新）带 incident 标签的 GitHub Issue 提醒协作者
+# - 线上恢复正常后自动在告警单留言恢复时间并关闭 Issue
+
+name: Site · uptime & incident monitor
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime-monitor
+  cancel-in-progress: false
+
+jobs:
+  healthcheck:
+    name: Live Uptime Probe
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VAR_SITE_URL: ${{ vars.SITE_URL }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Load monitor config & probe live endpoints
+        id: probe
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          eval "$(node -e '
+            const fs = require("fs");
+            const cfg = fs.existsSync(".collab/config.json") ? JSON.parse(fs.readFileSync(".collab/config.json", "utf8")) : {};
+            const url = (process.env.VAR_SITE_URL || cfg.siteUrl || "").replace(/\/+$/, "");
+            const paths = Array.isArray(cfg.healthPaths) && cfg.healthPaths.length ? cfg.healthPaths : ["/", "/api/health"];
+            const mentions = Array.isArray(cfg.alertMentions) ? cfg.alertMentions.join(" ") : "";
+            console.log("TARGET_URL=" + JSON.stringify(url));
+            console.log("HEALTH_PATHS=" + JSON.stringify(paths.join(" ")));
+            console.log("ALERT_MENTIONS=" + JSON.stringify(mentions));
+          ')"
+
+          echo "target_url=$TARGET_URL" >> "$GITHUB_OUTPUT"
+          echo "mentions=$ALERT_MENTIONS" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$TARGET_URL" ]; then
+            echo "ℹ️ 未配置 vars.SITE_URL 或 .collab/config.json -> siteUrl，跳过线上巡检。"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+          FAIL_LOG=""
+          for p in $HEALTH_PATHS; do
+            FULL_URL="${TARGET_URL}${p}"
+            OK=0
+            LAST_CODE="000"
+            for attempt in 1 2 3; do
+              BODY_FILE=$(mktemp)
+              CODE=$(curl -sS -L --max-time 15 -o "$BODY_FILE" -w '%{http_code}' "$FULL_URL" || echo "000")
+              LAST_CODE="$CODE"
+              if [ "$CODE" = "200" ]; then
+                if [[ "$p" == /api/* ]]; then
+                  if grep -q '"ok"[[:space:]]*:[[:space:]]*true' "$BODY_FILE" || head -c 2 "$BODY_FILE" | grep -q '[{[]'; then
+                    OK=1
+                    rm -f "$BODY_FILE"
+                    break
+                  fi
+                else
+                  OK=1
+                  rm -f "$BODY_FILE"
+                  break
+                fi
+              fi
+              rm -f "$BODY_FILE"
+              echo "⚠️ 探活重试 ($attempt/3): $FULL_URL -> HTTP $CODE"
+              sleep 5
+            done
+            if [ "$OK" -ne 1 ]; then
+              FAIL_LOG="${FAIL_LOG}- \`${FULL_URL}\` 连续 3 次探活异常（最后状态码：\`HTTP ${LAST_CODE}\`）"$'\n'
+            else
+              echo "✅ 探活正常: $FULL_URL (HTTP 200)"
+            fi
+          done
+
+          if [ -n "$FAIL_LOG" ]; then
+            {
+              echo "fail_summary<<EOF"
+              printf "%s" "$FAIL_LOG"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Open or update incident Issue on outage
+        if: steps.probe.outcome == 'failure' && steps.probe.outputs.skipped != 'true'
+        env:
+          TARGET_URL: ${{ steps.probe.outputs.target_url }}
+          MENTIONS: ${{ steps.probe.outputs.mentions }}
+          FAIL_SUMMARY: ${{ steps.probe.outputs.fail_summary }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create incident --color D93F0B --description "线上站点可用性告警" --force || true
+          OPEN_NUM=$(gh issue list --repo "${{ github.repository }}" --state open --label incident --limit 1 --json number --jq '.[0].number // empty')
+          NOW_UTC=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          BODY=$(cat <<EOF
+          ### 🚨 线上站点自动巡检发现异常
+          - **巡检时间**：\`${NOW_UTC}\`
+          - **目标站点**：${TARGET_URL}
+          - **巡检详情**：[查看 GitHub Actions 运行日志](${RUN_URL})
+
+          #### 异常端点明细
+          ${FAIL_SUMMARY}
+
+          #### 快速应急指引
+          1. 若刚完成部署，可检查最近一次 \`Site · test & deploy\` 是否已触发自动回滚；
+          2. 如需手动秒级回滚上一版本：在 \`site/\` 目录执行 \`npx wrangler@4.90.0 rollback --yes\`。
+
+          ${MENTIONS}
+          EOF
+          )
+          if [ -z "$OPEN_NUM" ]; then
+            gh issue create --repo "${{ github.repository }}" \
+              --title "🚨 [线上巡检告警] ${TARGET_URL} 访问异常" \
+              --label "incident" \
+              --body "$BODY"
+          else
+            gh issue comment "$OPEN_NUM" --repo "${{ github.repository }}" --body "⏱️ **持续异常巡检更新（${NOW_UTC}）**："$'\n'"${FAIL_SUMMARY}"$'\n'"日志：${RUN_URL}"
+          fi
+          exit 1
+
+      - name: Auto-close incident Issue upon recovery
+        if: steps.probe.outcome == 'success' && steps.probe.outputs.skipped != 'true'
+        env:
+          TARGET_URL: ${{ steps.probe.outputs.target_url }}
+        run: |
+          OPEN_NUMS=$(gh issue list --repo "${{ github.repository }}" --state open --label incident --json number --jq '.[].number')
+          if [ -n "$OPEN_NUMS" ]; then
+            NOW_UTC=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            for num in $OPEN_NUMS; do
+              gh issue comment "$num" --repo "${{ github.repository }}" \
+                --body "✅ **线上服务已恢复正常（\`${NOW_UTC}\`）**：所有核心页面与数据接口均返回 \`HTTP 200\`，系统自动关闭本告警单。"
+              gh issue close "$num" --repo "${{ github.repository }}"
+            done
+          fi

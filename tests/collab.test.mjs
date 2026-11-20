@@ -142,3 +142,39 @@ test("spawn 动态创建隔离 Worktree、分配不冲突端口、安全拷贝�
   const cleaned = JSON.parse(cleanRes.stdout);
   assert.ok(cleaned.deletedBranches.includes("work/xiao/claude/feat-b"));
 });
+
+test("auditPr 硬性拦截未解决的 Git 合并冲突标记，且 initRepo 支持自动注入线上巡检工作流", (t) => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "collab-mesh-anti-outage-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const repo = path.join(tmp, "web");
+  mkdirSync(repo);
+  git(["init", "-b", "main"], repo);
+  git(["config", "user.name", "Test User"], repo);
+  git(["config", "user.email", "test@example.com"], repo);
+
+  initRepo(repo, {
+    siteUrl: "https://example.com",
+    healthPaths: "/,/api/health,/api/jobdb/stats",
+    alertMentions: "@alice,@bob",
+  });
+  assert.equal(existsSync(path.join(repo, ".github/workflows/uptime-monitor.yml")), true, "配置 siteUrl 时应自动注入 uptime-monitor.yml");
+  const cfg = JSON.parse(readFileSync(path.join(repo, ".collab/config.json"), "utf8"));
+  assert.equal(cfg.siteUrl, "https://example.com");
+  assert.deepEqual(cfg.healthPaths, ["/", "/api/health", "/api/jobdb/stats"]);
+  assert.deepEqual(cfg.alertMentions, ["@alice", "@bob"]);
+
+  git(["add", "-A"], repo);
+  git(["commit", "-m", "chore: init"], repo);
+
+  git(["checkout", "-b", "work/xiao/codex/bad-merge"], repo);
+  const markerStart = "<".repeat(7) + " HEAD";
+  const markerMid = "=".repeat(7);
+  const markerEnd = ">".repeat(7) + " origin/main";
+  writeFileSync(path.join(repo, "broken.md"), `# Title\n${markerStart}\nours\n${markerMid}\ntheirs\n${markerEnd}\n`, "utf8");
+  git(["add", "broken.md"], repo);
+  git(["commit", "-m", "accidental conflict markers"], repo);
+
+  const report = auditPr(repo, "main");
+  assert.equal(report.ok, false, "包含合并冲突标记的文件必须被 auditPr 拦截");
+  assert.match(report.errors.join("\n"), /合并冲突标记.*broken\.md/);
+});

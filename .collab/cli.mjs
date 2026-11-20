@@ -510,15 +510,33 @@ export function auditPr(root, baseRef, extraLabels = []) {
     const match = secretRegex.exec(line);
     if (match) errors.push(`新增代码疑似硬编码真实密钥：${match[1].slice(0, 8)}***`);
   }
+  const porcelainLines = git(["status", "--porcelain"], { cwd: root, allowFail: true }).stdout.split(/\r?\n/).filter(Boolean);
+  for (const pl of porcelainLines) {
+    const uMatch = /^(UU|AA|DD|AU|UA|DU|UD)\s+(.+)$/.exec(pl);
+    if (uMatch) errors.push(`存在未解决的 Git 合并冲突状态：${uMatch[2]}`);
+  }
+  const conflictMarkerRe = new RegExp(`^(?:${"<".repeat(7)} |${">".repeat(7)} )`, "m");
+  const candidateFiles = new Set();
   if (baseCheck.status === 0) {
     const changed = git(["diff", "--name-only", "--diff-filter=AM", `${base}...HEAD`], { cwd: root, allowFail: true })
       .stdout.split(/\r?\n/).filter(Boolean);
-    for (const rel of changed) {
-      const full = path.join(root, rel);
-      if (existsSync(full) && statSync(full).isFile()) {
-        const mb = statSync(full).size / (1024 * 1024);
-        if (mb > cfg.maxFileSizeMb) {
-          errors.push(`新增或修改文件超过 ${cfg.maxFileSizeMb} MB 上限：${rel} (${mb.toFixed(2)} MB)`);
+    for (const rel of changed) candidateFiles.add(rel);
+  }
+  for (const rel of git(["diff", "--name-only", "HEAD"], { cwd: root, allowFail: true }).stdout.split(/\r?\n/).filter(Boolean)) {
+    candidateFiles.add(rel);
+  }
+  for (const rel of candidateFiles) {
+    const full = path.join(root, rel);
+    if (existsSync(full) && statSync(full).isFile()) {
+      const sizeBytes = statSync(full).size;
+      const mb = sizeBytes / (1024 * 1024);
+      if (mb > cfg.maxFileSizeMb) {
+        errors.push(`新增或修改文件超过 ${cfg.maxFileSizeMb} MB 上限：${rel} (${mb.toFixed(2)} MB)`);
+      }
+      if (sizeBytes <= 2 * 1024 * 1024) {
+        const buf = readFileSync(full);
+        if (!buf.subarray(0, 8192).includes(0) && conflictMarkerRe.test(buf.toString("utf8"))) {
+          errors.push(`检测到未解决的 Git 合并冲突标记：${rel}`);
         }
       }
     }
@@ -533,7 +551,7 @@ function cmdAuditPr(root, flags) {
     for (const err of report.errors) console.error(`  - ${err}`);
     process.exit(1);
   }
-  console.log("✅ [Collab Gate] 密钥扫描、体积预算与统一引导环校验全部通过。");
+  console.log("✅ [Collab Gate] 冲突标记拦截、密钥扫描、体积预算与统一引导环校验全部通过。");
 }
 
 function runShellCommand(command, cwd) {
