@@ -82,6 +82,7 @@ export function initRepo(targetRepo, options = {}) {
   const collabDir = path.join(root, ".collab");
   mkdirSync(collabDir, { recursive: true });
   copyFileSync(path.join(PKG_ROOT, "runtime/cli.mjs"), path.join(collabDir, "cli.mjs"));
+  copyFileSync(path.join(PKG_ROOT, "runtime/autopilot.mjs"), path.join(collabDir, "autopilot.mjs"));
   if (!existsSync(path.join(collabDir, "PROTOCOL.md")) || options.overwrite) {
     copyFileSync(path.join(PKG_ROOT, "templates/PROTOCOL.md"), path.join(collabDir, "PROTOCOL.md"));
   }

@@ -748,8 +748,31 @@ async function main() {
     case "cleanup":
       cmdCleanup(root);
       break;
+    case "autopilot": {
+      const sub = positional[1] || "status";
+      const cfg = loadConfig(root);
+      const quietSeconds = flags.quiet !== undefined ? Number(flags.quiet) : (cfg.autopilotQuietSeconds ?? 45);
+      const pullIntervalSeconds = flags.interval !== undefined ? Number(flags.interval) : (cfg.autopilotPullSeconds ?? 20);
+      const ap = await import("./autopilot.mjs");
+      if (sub === "run") {
+        await ap.runAutopilotLoop(root, { quietSeconds, pullIntervalSeconds, protectedBranch: cfg.protectedBranch, once: false });
+      } else if (sub === "once") {
+        await ap.runAutopilotLoop(root, { quietSeconds, pullIntervalSeconds, protectedBranch: cfg.protectedBranch, once: true });
+      } else if (sub === "start") {
+        console.log(JSON.stringify(ap.startAutopilotDetached(root, { quietSeconds, pullIntervalSeconds }), null, 2));
+      } else if (sub === "stop") {
+        console.log(JSON.stringify(ap.stopAutopilot(root), null, 2));
+      } else if (sub === "status") {
+        console.log(JSON.stringify(ap.getAutopilotStatus(root), null, 2));
+      } else if (sub === "install-service") {
+        console.log(JSON.stringify(ap.installAutopilotStartupTask(root, { quietSeconds, pullIntervalSeconds }), null, 2));
+      } else {
+        throw new Error(`未知 autopilot 子命令：${sub}。支持：start | stop | status | run | once | install-service`);
+      }
+      break;
+    }
     default:
-      throw new Error(`未知命令：${command}。支持命令：status | hooks | radar | spawn | start | sync | decision | audit-pr | ship | protect | cleanup`);
+      throw new Error(`未知命令：${command}。支持命令：status | hooks | radar | spawn | start | sync | decision | audit-pr | ship | protect | cleanup | autopilot`);
   }
 }
 

@@ -50,6 +50,12 @@ node .collab/cli.mjs decision "接口分页上限100" --summary "..."  # 追加�
 node .collab/cli.mjs ship --title "feat: 完成新功能"             # 安全审计 + 推送 PR + 开启自动合并
 node .collab/cli.mjs protect --checks "Collab Gate,Test"         # （仓库管理员）开启远端强分支保护与 Auto-merge
 node .collab/cli.mjs cleanup                                     # 清理已合并的本地工位与分支
+
+# 双向无感自动同步守护进程（免命令自动提 PR 过 CI + 20 秒实时下行拉取）
+node .collab/cli.mjs autopilot start --quiet 45 --interval 20    # 启动后台常驻守护进程
+node .collab/cli.mjs autopilot status                            # 查看守护进程状态与最近同步日志
+node .collab/cli.mjs autopilot stop                              # 停止后台守护进程
+node .collab/cli.mjs autopilot install-service                   # 注册 Windows 登录开机自启任务
 ```
 
 ---
