@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { auditPr, installHooks } from "./cli.mjs";
-import { incrementalSyncCloudDb, migrateReplica, seedWorktreeReplicaIfAvailable } from "./db.mjs";
+import { migrateReplica, seedWorktreeReplicaIfAvailable } from "./db.mjs";
 
 function findBin(name, extras = []) {
   const cmd = process.platform === "win32" ? "where.exe" : "which";
@@ -102,9 +102,19 @@ function parseDirtyFiles(wtPath) {
 }
 
 export function syntaxPrecheck(wtPath, dirtyFiles) {
-  for (const { rel } of dirtyFiles) {
+  for (const { code, rel } of dirtyFiles) {
+    // 未解决的合并冲突（UU / AA / DD 等）一律禁止打包上行
+    if (code && (code.includes("U") || code === "AA" || code === "DD")) {
+      return { ok: false, reason: `存在未解决的合并冲突 (${rel})，暂停自动上行` };
+    }
     const full = path.join(wtPath, rel);
     if (!existsSync(full) || !statSync(full).isFile()) continue;
+    if (statSync(full).size < 2 * 1024 * 1024) {
+      const text = readFileSync(full, "utf8");
+      if (/^(<{7}|>{7}) /m.test(text) && /^={7}\s*$/m.test(text)) {
+        return { ok: false, reason: `文件含冲突标记 (${rel})，暂停自动上行` };
+      }
+    }
     const ext = path.extname(rel).toLowerCase();
     if (ext === ".js" || ext === ".mjs") {
       const chk = exec(process.execPath, ["--check", full], { cwd: wtPath, timeout: 8000 });
@@ -185,7 +195,7 @@ function ensurePrAndAutoMerge(wtPath, branch, protectedBranch, title, actor) {
 /**
  * 在不切换主工作区 main 分支、不争抢默认 .git/index 的前提下，把主工作区的修改打包成临时树并推送至远端 autopilot PR 分支。
  */
-export function shipMainWorktreeShadow(wtPath, { actor, protectedBranch, activeBranch, baseRef }) {
+export function shipMainWorktreeShadow(wtPath, { actor, protectedBranch, activeBranch, baseRef, lastShippedTreeSha }) {
   const dirty = parseDirtyFiles(wtPath);
   if (dirty.length === 0) return { skipped: "clean" };
 
@@ -212,6 +222,8 @@ export function shipMainWorktreeShadow(wtPath, { actor, protectedBranch, activeB
 
     const baseTree = exec(GIT, ["rev-parse", `${baseRef}^{tree}`], { cwd: wtPath }).stdout;
     if (treeSha === baseTree) return { skipped: "matches-base", treeSha };
+    // 内容与上次已推送的完全相同：不再重复强推（否则会反复取消正在运行的 CI，PR 永远合不进去）
+    if (lastShippedTreeSha && treeSha === lastShippedTreeSha) return { skipped: "already-shipped", treeSha };
 
     const title = `feat(autopilot): 自动同步 ${summarizeFiles(dirty)}`;
     const parentSha = exec(GIT, ["rev-parse", baseRef], { cwd: wtPath }).stdout;
@@ -347,17 +359,11 @@ export function pullAllWorktrees(root, protectedBranch, wtStates) {
           wtStates.set(wtPath, st);
           events.push(`✅ 主工位本地修改已在云端通过 CI 合入 ${protectedBranch} (${remoteSha.slice(0, 7)})，本地指针已自动归位`);
         } else {
-          // 存在其他未提交本地修改时，尝试安全 stash → ff-only → stash pop
-          const stashed = exec(GIT, ["stash", "push", "-u", "-m", "autopilot-inbound-sync"], { cwd: wtPath });
-          if (stashed.ok) {
-            const ff = exec(GIT, ["merge", "--ff-only", baseRef], { cwd: wtPath });
-            const popped = exec(GIT, ["stash", "pop"], { cwd: wtPath });
-            if (ff.ok && popped.ok) {
-              events.push(`⬇️ 主工位保留本地改动并无冲突同步至 ${remoteSha.slice(0, 7)}`);
-            } else {
-              exec(GIT, [" checkout", "--", "."], { cwd: wtPath });
-              events.push(`⚠️ 主工位本地未提交改动与远端同位置冲突，已保留在 git stash 中避免覆盖`);
-            }
+          // 有尚未上行合入的本地修改：绝不 stash / 合并，只等待（避免把工作区搞成冲突状态、打断正在运行的预览）
+          if (!st.waitingNoticeSha || st.waitingNoticeSha !== remoteSha) {
+            st.waitingNoticeSha = remoteSha;
+            wtStates.set(wtPath, st);
+            events.push(`⏸️ 主工位有未合入的本地修改，暂缓下行同步 ${remoteSha.slice(0, 7)}（待本地修改经 PR 合入后自动对齐）`);
           }
         }
       }
@@ -436,7 +442,6 @@ export async function runAutopilotLoop(root, {
   const wtStates = new Map();
   const recentEvents = [];
   let lastPullAt = 0;
-  let lastDbSyncAt = 0;
   let lastRemoteSha = "";
 
   function recordEvent(msg) {
@@ -501,16 +506,6 @@ export async function runAutopilotLoop(root, {
         }
       }
 
-      // 1b. 每 180 秒检测一次云端大库 updated_at，有新数据时自动增量合入所有工位副本（保留本地自造测试数据）
-      if (!once && now - lastDbSyncAt >= 180 * 1000) {
-        lastDbSyncAt = now;
-        const wtPaths = listWorktrees(root).map((w) => w.worktree);
-        const dbSync = await incrementalSyncCloudDb(root, wtPaths).catch(() => ({ updated: false }));
-        if (dbSync.updated) {
-          recordEvent(`🗄️ 云端主库增量同步完成：新增/更新 ${dbSync.deltaJobs ?? dbSync.syncedJobs ?? 0} 条记录至各工位本地副本`);
-        }
-      }
-
       // 2. 扫描所有本地工位执行上行自动打包提 PR
       const baseRef = exec(GIT, ["rev-parse", "--verify", `origin/${protectedBranch}`], { cwd: root }).ok
         ? `origin/${protectedBranch}`
@@ -535,6 +530,7 @@ export async function runAutopilotLoop(root, {
               protectedBranch,
               activeBranch: st.activeShadowBranch,
               baseRef,
+              lastShippedTreeSha: st.lastShippedTreeSha,
             });
             if (res.ok && res.treeSha !== st.lastShippedTreeSha) {
               st.lastShippedTreeSha = res.treeSha;

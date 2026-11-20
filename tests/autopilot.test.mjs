@@ -33,6 +33,11 @@ test("syntaxPrecheck 拦截半截 JS 与损坏 JSON，放行完整语法", (t) =
   writeFileSync(path.join(tmp, "good.mjs"), "export const ok = 42;\n", "utf8");
   writeFileSync(path.join(tmp, "good.json"), '{"a": 1}\n', "utf8");
   assert.equal(syntaxPrecheck(tmp, [{ rel: "good.mjs" }, { rel: "good.json" }]).ok, true);
+
+  // 回归：含冲突标记的文件、未解决冲突状态（UU）都必须拦截，不许自动上行
+  writeFileSync(path.join(tmp, "doc.md"), "a\n<<<<<<< Updated upstream\nx\n=======\ny\n>>>>>>> Stashed changes\n", "utf8");
+  assert.equal(syntaxPrecheck(tmp, [{ rel: "doc.md" }]).ok, false);
+  assert.equal(syntaxPrecheck(tmp, [{ code: "UU", rel: "good.mjs" }]).ok, false);
 });
 
 test("Autopilot 双向无感同步：上行自动推 work/* 与影子分支，下行实时拉回所有工位", (t) => {
@@ -95,6 +100,16 @@ test("Autopilot 双向无感同步：上行自动推 work/* 与影子分支，�
   });
   assert.equal(shadow.ok, true);
   assert.equal(git(["branch", "--show-current"], mainRepo), "main");
+
+  // 回归：同一份内容不得重复强推（否则反复取消 CI）
+  const again = shipMainWorktreeShadow(mainRepo, {
+    actor: "xiao",
+    protectedBranch: "main",
+    baseRef: "origin/main",
+    activeBranch: shadow.branch,
+    lastShippedTreeSha: shadow.treeSha,
+  });
+  assert.equal(again.skipped, "already-shipped");
 
   // 3. 模拟另一位协作者（如 Yong 的 Claude Code）在远端合入了新功能到 main
   git(["clone", bare, peerRepo], tmp);
