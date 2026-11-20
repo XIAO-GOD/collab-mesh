@@ -46,10 +46,14 @@ jobs:
       - name: Run configured gate test command (if standalone)
         run: node .collab/cli.mjs run-gate-tests
 
-      - name: Enable native GitHub Auto-Merge when supported
+      - name: Enable native GitHub Auto-Merge when branch protection is active
         if: env.IS_DRAFT == 'false'
         run: |
-          gh pr merge "$PR_NUMBER" --squash --auto --delete-branch || echo "提示：仓库尚未开启原生 Allow auto-merge，将由下方 auto-merge 任务在全部 CI 通过后自动合入。"
+          if gh api "repos/${{ github.repository }}/branches/$BASE_REF/protection" >/dev/null 2>&1; then
+            gh pr merge "$PR_NUMBER" --squash --auto --delete-branch || true
+          else
+            echo "提示：仓库尚未开启远端分支保护，将由 auto-merge 任务在全部必选 CI（含 Test）通过后再自动合入。"
+          fi
 
   automerge:
     name: Auto-Merge When All Checks Green
