@@ -1,7 +1,7 @@
 {
   "name": "collab-mesh",
   "version": "1.0.0",
-  "description": "任意人 × 任意异构 Agent（Codex / Claude Code / Antigravity / Cursor / Gemini CLI）GitHub 零信任自动协同开发底座",
+  "description": "AI原生联合开发平台：任意人 × 任意异构 Agent（Codex / Claude Code / Antigravity / Cursor / Gemini CLI）GitHub 零信任双向无感自动协同底座",
   "type": "module",
   "bin": {
     "collab-mesh": "./bin/collab-mesh.mjs"

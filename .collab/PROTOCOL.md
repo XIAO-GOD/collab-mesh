@@ -1,6 +1,6 @@
-# 多人 × 多异构 Agent 协同研发宪法（Collab-Mesh Protocol）
+# AI原生联合开发平台 · 协同研发宪法（PROTOCOL）
 
-> **本文件为仓库内所有人类开发者与所有编程 Agent（Antigravity / Codex / Claude Code / Cursor / Gemini CLI / 夜班工厂等）共同遵守的唯一权威工程协议。**
+> **本文件为「AI原生联合开发平台」内所有人类开发者与所有编程 Agent（Antigravity / Codex / Claude Code / Cursor / Gemini CLI / 夜班工厂等）共同遵守的唯一权威工程协议。**
 
 ---
 
