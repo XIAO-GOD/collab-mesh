@@ -1,0 +1,61 @@
+# Collab-Mesh · 任意人 × 任意异构 Agent 协同开发底座
+
+> **不写死人名、不绑定单一 AI 工具、禁止直推 `main`、免人工审批阻塞、CI 全绿自动合入。**
+
+`collab-mesh` 是一套零外部依赖的 GitHub 原生多智能体协同工程底座（同时可作为 Codex / Claude Code / Antigravity 通用 Skill 安装）。只需一条 `init` 命令，即可让任意仓库同时兼容 **Antigravity、Codex、Claude Code、Cursor、Gemini CLI、夜班工厂** 等任意数量的开发者与智能体并行开发。
+
+---
+
+## 一、核心特性
+
+1. **全异构 Agent 统一引导环（Bootstrap Ring）**：
+   自动维护 `AGENTS.md`、`CLAUDE.md`、`GEMINI.md`、`.cursor/rules/00-collab.mdc` 与 `.github/copilot-instructions.md` 托管区块，全部指向单一事实源 `.collab/PROTOCOL.md`，任何新成员带着任何 Agent 克隆仓库即可 0 培训自动守规矩。
+2. **本机多开动态工位（`spawn`）**：
+   同一台电脑同时运行 Antigravity + 多个 Codex 时，2 秒创建共享 `.git` 的独立 `git worktree` 工位，自动分配空闲端口（如 `8791`、`8792`）并安全拷贝本地私有 `.dev.vars` 密钥，彻底告别文件锁、测试截图与端口互抢。
+3. **跨机防撞车雷达（`radar` + Draft PR 信标）**：
+   无需额外部署协调服务器，利用 GitHub Draft PR 广播正在施工的路径通配符；任何 Agent 动工前自动扫描重叠热区并预警。
+4. **零信任主干保护 + 免审批全自动合并（`protect` + `ship` + `collab-gate.yml`）**：
+   - 本地 `pre-push` 钩子 + 远端 `enforce_admins: true` 严禁任何人（含管理员）直接 `push main`；
+   - PR 无需人工点击 Approve（`required_approving_review_count: 0`）；
+   - 自动拦截 `.dev.vars`、硬编码 `sk-*`/`ghp_*` 密钥与超大文件，全量 CI 测试通过后自动 Squash Merge 并清理源分支。
+5. **无冲突追加式决策记录（`decision`）**：
+   每次架构或产品决策独立生成 `docs/decisions/<时间戳>-<slug>.md`，多人高频并发提交永不撞同一行文本。
+
+---
+
+## 二、快速安装与使用
+
+### 作为 Agent Skill 安装
+```powershell
+# Codex
+git clone https://github.com/XIAO-GOD/collab-mesh.git "$env:USERPROFILE\.codex\skills\collab-mesh"
+
+# Claude Code
+git clone https://github.com/XIAO-GOD/collab-mesh.git "$env:USERPROFILE\.claude\skills\collab-mesh"
+```
+
+### 一键赋能任意 GitHub 项目
+```powershell
+node bin/collab-mesh.mjs init E:\GitHub\your-project --base-port 8790 --required-checks "Collab Gate,Test"
+```
+
+### 目标仓库常用命令
+```powershell
+node .collab/cli.mjs status                                      # 查看当前身份、工位、同步状态
+node .collab/cli.mjs spawn --agent codex --topic new-feature     # 为另一个 Agent 开辟独立 Worktree 工位
+node .collab/cli.mjs radar --paths "site/src/ai-*"               # 扫描远端活跃 PR 是否冲突
+node .collab/cli.mjs start --agent codex --topic new-feature     # 切分支并发起 Draft PR 施工信标
+node .collab/cli.mjs sync                                        # 安全暂存并同步最新 origin/main
+node .collab/cli.mjs decision "接口分页上限100" --summary "..."  # 追加无冲突 ADR 决策文件
+node .collab/cli.mjs ship --title "feat: 完成新功能"             # 安全审计 + 推送 PR + 开启自动合并
+node .collab/cli.mjs protect --checks "Collab Gate,Test"         # （仓库管理员）开启远端强分支保护与 Auto-merge
+node .collab/cli.mjs cleanup                                     # 清理已合并的本地工位与分支
+```
+
+---
+
+## 三、运行自身测试套件
+
+```powershell
+npm test
+```

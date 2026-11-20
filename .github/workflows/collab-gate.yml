@@ -1,0 +1,73 @@
+# Collab-Mesh：零信任 PR 安全门禁与免审批 CI 全绿自动合并
+#
+# 1. 拦截敏感凭据（.dev.vars / API Key）、意外大文件与协议文件缺失
+# 2. 非 Draft 的 PR 在全部必选 CI 检查通过后自动 Squash 合入 main 并清理分支（无需人工审批阻塞）
+
+name: Collab · gate & auto-merge
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  workflow_run:
+    workflows: ["Site · test & deploy", "CI", "Test"]
+    types: [completed]
+  check_suite:
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+jobs:
+  gate:
+    name: Collab Gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      IS_DRAFT: ${{ github.event.pull_request.draft }}
+      BASE_REF: ${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Security, file-size & bootstrap-ring audit
+        run: node .collab/cli.mjs audit-pr --base "origin/$BASE_REF"
+
+      - name: Run configured gate test command (if standalone)
+        run: node .collab/cli.mjs run-gate-tests
+
+      - name: Enable native GitHub Auto-Merge when supported
+        if: env.IS_DRAFT == 'false'
+        run: |
+          gh pr merge "$PR_NUMBER" --squash --auto --delete-branch || echo "提示：仓库尚未开启原生 Allow auto-merge，将由下方 auto-merge 任务在全部 CI 通过后自动合入。"
+
+  automerge:
+    name: Auto-Merge When All Checks Green
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'check_suite' && github.event.check_suite.conclusion == 'success')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.check_suite.head_sha }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Verify all required checks passed and squash-merge PR
+        if: env.HEAD_SHA != ''
+        run: node .collab/cli.mjs ci-automerge --repo "$REPO" --sha "$HEAD_SHA"

@@ -1,0 +1,16 @@
+{
+  "protectedBranch": "main",
+  "basePort": 8790,
+  "maxFileSizeMb": 15,
+  "secretFiles": [
+    ".dev.vars",
+    "site/.dev.vars",
+    ".env.local",
+    "site/.env.local"
+  ],
+  "requiredChecks": [
+    "Collab Gate"
+  ],
+  "localTestCommand": "",
+  "gateTestCommand": "npm test"
+}
