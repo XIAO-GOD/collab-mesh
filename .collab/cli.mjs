@@ -565,8 +565,18 @@ function cmdShip(root, flags) {
     prUrl = parsed.url;
   }
 
-  const autoRes = gh(["pr", "merge", prNumber, "--squash", "--auto", "--delete-branch"], { cwd: root, allowFail: true });
-  const autoMode = autoRes.status === 0 ? "native-github-automerge" : "workflow-gate-automerge";
+  // 仅当远端已开启原生分支保护时才调用 gh pr merge --auto（否则无保护分支上 gh 会跳过 CI 立即合并！）
+  const remoteUrl = git(["remote", "get-url", "origin"], { cwd: root, allowFail: true }).stdout;
+  const repoMatch = /github\.com[:/]([^/]+\/[^/.]+)(?:\.git)?$/i.exec(remoteUrl);
+  const protectionActive = repoMatch
+    ? gh(["api", `repos/${repoMatch[1]}/branches/${cfg.protectedBranch}/protection`], { cwd: root, allowFail: true }).status === 0
+    : false;
+
+  let autoMode = "workflow-gate-automerge (等待全部 CI 通过后自动合入)";
+  if (protectionActive) {
+    const autoRes = gh(["pr", "merge", prNumber, "--squash", "--auto", "--delete-branch"], { cwd: root, allowFail: true });
+    if (autoRes.status === 0) autoMode = "native-github-automerge";
+  }
   console.log(JSON.stringify({ ok: true, branch, prNumber: Number(prNumber), prUrl, autoMergeMode: autoMode }, null, 2));
 }
 
