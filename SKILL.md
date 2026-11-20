@@ -40,4 +40,9 @@ node .collab/cli.mjs ship --title "feat: 完成某某功能"
 
 # （仓库管理员执行一次）在 GitHub 远端开启限制管理员直推 main + 必过 CI + 自动合并
 node .collab/cli.mjs protect --checks "Collab Gate,Test"
+
+# 开启全自动无感双向同步（停笔 45 秒自动上行提 PR 等 CI 合入，每 20 秒自动下行同步所有工位）
+node .collab/cli.mjs autopilot start --quiet 45 --interval 20
+node .collab/cli.mjs autopilot status
+node .collab/cli.mjs autopilot install-service
 ```

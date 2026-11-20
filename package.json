@@ -10,6 +10,6 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test tests/collab.test.mjs"
+    "test": "node --test tests/collab.test.mjs tests/autopilot.test.mjs"
   }
 }

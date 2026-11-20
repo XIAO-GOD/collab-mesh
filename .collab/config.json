@@ -12,5 +12,5 @@
     "Collab Gate"
   ],
   "localTestCommand": "",
-  "gateTestCommand": "npm test"
+  "gateTestCommand": "node --test tests/collab.test.mjs tests/autopilot.test.mjs"
 }
